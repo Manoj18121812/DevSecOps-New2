@@ -34,7 +34,7 @@ spec:
           value: studentdb
 
         - name: DB_USERNAME
-          value: student123
+          value: student
 
         - name: DB_PASSWORD
           value: student123
