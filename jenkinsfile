@@ -1,0 +1,146 @@
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk17'
+    }
+
+    environment {
+        IMAGE_NAME   = "manoj1812/product"
+        IMAGE_TAG    = "${BUILD_NUMBER}"
+        AWS_REGION   = "us-east-1"
+        CLUSTER_NAME = "project-cluster"
+    }
+
+    stages {
+
+        stage('Git Clone') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/Manoj18121812/DevSecOps-New2.git'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh """
+                docker build \
+                  -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                  -t ${IMAGE_NAME}:latest .
+                """
+            }
+        }
+        stage('SonarQube Scan') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh '''
+                    mvn sonar:sonar \
+                    -Dsonar.projectKey=student-app \
+                    -Dsonar.projectName=student-app
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+stage('OWASP Dependency Check') {
+    steps {
+        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+
+            dependencyCheck(
+                odcInstallation: 'Dependency-Check',
+                additionalArguments: "--scan . --format XML --format HTML --nvdApiKey ${NVD_API_KEY}"
+            )
+        }
+    }
+}
+
+stage('Publish OWASP Report') {
+    steps {
+        dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+    }
+}
+
+stage('Trivy Image Scan') {
+    steps {
+        sh '''
+        trivy image \
+        --severity HIGH,CRITICAL \
+        --exit-code 1 \
+        --no-progress \
+        manoj1812/student-app:${BUILD_NUMBER}
+        '''
+    }
+}
+        stage('Docker Login & Push') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+
+                    sh """
+                    echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+
+                    docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push ${IMAGE_NAME}:latest
+
+                    docker logout
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds'
+                ]]) {
+
+                    sh """
+                    aws eks update-kubeconfig \
+                      --region ${AWS_REGION} \
+                      --name ${CLUSTER_NAME}
+
+                    kubectl set image deployment/student-app \
+                      student-app=${IMAGE_NAME}:${IMAGE_TAG}
+
+                    kubectl rollout status deployment/student-app
+
+                    kubectl get pods
+                    kubectl get svc
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo 'Pipeline Executed Successfully!'
+        }
+
+        failure {
+            echo 'Pipeline Failed!'
+        }
+
+        always {
+            cleanWs()
+        }
+    }
+}
