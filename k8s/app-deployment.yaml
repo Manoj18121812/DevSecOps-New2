@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: student-app
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: student-app
+
+  template:
+    metadata:
+      labels:
+        app: student-app
+
+    spec:
+      containers:
+      - name: student-app
+        image: manoj1812/product:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+
+        env:
+        - name: DB_HOST
+          value: mysql
+
+        - name: DB_PORT
+          value: "3306"
+
+        - name: DB_NAME
+          value: studentdb
+
+        - name: DB_USERNAME
+          value: student123
+
+        - name: DB_PASSWORD
+          value: student123
